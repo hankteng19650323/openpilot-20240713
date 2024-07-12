@@ -1,6 +1,7 @@
 from collections import namedtuple
 
 from cereal import car
+from openpilot.common.conversions import Conversions as CV
 from openpilot.common.numpy_fast import clip, interp
 from openpilot.common.realtime import DT_CTRL
 from opendbc.can.packer import CANPacker
@@ -11,6 +12,8 @@ from openpilot.selfdrive.controls.lib.drive_helpers import rate_limit
 
 VisualAlert = car.CarControl.HUDControl.VisualAlert
 LongCtrlState = car.CarControl.Actuators.LongControlState
+
+ROUNDED_KPH_FACTOR = 1.6
 
 
 def compute_gb_honda_bosch(accel, speed):
@@ -76,6 +79,14 @@ def brake_pump_hysteresis(apply_brake, apply_brake_last, last_pump_ts, ts):
   return pump_on, last_pump_ts
 
 
+def round_hud_set_speed(v_cruise_kph, is_metric):
+  # to display accurately in the UI, TODO: understand this better
+  if not is_metric:
+    v_cruise_kph = v_cruise_kph / (CV.MPH_TO_KPH / ROUNDED_KPH_FACTOR)
+    v_cruise_kph = round(v_cruise_kph / ROUNDED_KPH_FACTOR) * ROUNDED_KPH_FACTOR * 1.001
+  return round(v_cruise_kph)
+
+
 def process_hud_alert(hud_alert):
   # initialize to no alert
   fcw_display = 0
@@ -129,7 +140,7 @@ class CarController(CarControllerBase):
     actuators = CC.actuators
     hud_control = CC.hudControl
     conversion = hondacan.get_cruise_speed_conversion(self.CP.carFingerprint, CS.is_metric)
-    hud_v_cruise = hud_control.setSpeed / conversion if hud_control.speedVisible else 255
+    hud_v_cruise = round_hud_set_speed(hud_control.setSpeed / conversion, CS.is_metric) if hud_control.speedVisible else 255
     pcm_cancel_cmd = CC.cruiseControl.cancel
 
     if CC.longActive:
@@ -236,7 +247,7 @@ class CarController(CarControllerBase):
 
     # Send dashboard UI commands.
     if self.frame % 10 == 0:
-      hud = HUDData(int(pcm_accel), int(round(hud_v_cruise)), hud_control.leadVisible,
+      hud = HUDData(int(pcm_accel), hud_v_cruise, hud_control.leadVisible,
                     hud_control.lanesVisible, fcw_display, acc_alert, steer_required, hud_control.leadDistanceBars)
       can_sends.extend(hondacan.create_ui_commands(self.packer, self.CAN, self.CP, CC.enabled, pcm_speed, hud, CS.is_metric, CS.acc_hud, CS.lkas_hud))
 
